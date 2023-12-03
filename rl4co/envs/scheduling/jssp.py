@@ -1,4 +1,7 @@
+from typing import Tuple
+
 import numpy as np
+import torch
 
 
 class Configs:
@@ -8,45 +11,56 @@ class Configs:
 configs = Configs()
 
 
-def permissibleLeftShift(
+def permissible_left_shift(
     actions,
-    duration_matrices,
-    machines_matrices,
-    machines_starting_times,
+    durations,
+    machines,
+    machines_start_times,
     operations_on_machines,
 ):
-    jobRdyTime_a, mchRdyTime_a = calJobAndMchRdyTimeOfa(
+    batch_idxs = torch.arange(machines.shape[0])
+    ops_ready_time, machines_ready_time = job_machines_ready_time(
         actions,
-        machines_matrices,
-        duration_matrices,
-        machines_starting_times,
+        machines,
+        durations,
+        machines_start_times,
         operations_on_machines,
     )
-    dur_a = np.take(duration_matrices, actions)
-    machines_actions = np.take(machines_matrices, actions) - 1
-    startTimesForMchOfa = machines_starting_times[machines_actions]
-    opsIDsForMchOfa = operations_on_machines[machines_actions]
+    ops_duration = durations.flatten(1)[batch_idxs, actions]
+    machines_selected = machines.flatten(1)[batch_idxs, actions] - 1
+    start_times_for_selected_machines = machines_start_times[
+        batch_idxs, machines_selected
+    ]
+    ops_for_selected_machines = operations_on_machines[batch_idxs, machines_selected]
     flag = False
-
-    possiblePos = np.where(jobRdyTime_a < startTimesForMchOfa)[0]
+    # TODO da qui
+    possiblePos = np.where(ops_ready_time < start_times_for_selected_machines)[0]
     # print('possiblePos:', possiblePos)
     if len(possiblePos) == 0:
         startTime_a = putInTheEnd(
-            actions, jobRdyTime_a, mchRdyTime_a, startTimesForMchOfa, opsIDsForMchOfa
+            actions,
+            ops_ready_time,
+            machines_ready_time,
+            start_times_for_selected_machines,
+            ops_for_selected_machines,
         )
     else:
         idxLegalPos, legalPos, endTimesForPossiblePos = calLegalPos(
-            dur_a,
-            jobRdyTime_a,
-            duration_matrices,
+            ops_duration,
+            ops_ready_time,
+            durations,
             possiblePos,
-            startTimesForMchOfa,
-            opsIDsForMchOfa,
+            start_times_for_selected_machines,
+            ops_for_selected_machines,
         )
         # print('legalPos:', legalPos)
         if len(legalPos) == 0:
             startTime_a = putInTheEnd(
-                actions, jobRdyTime_a, mchRdyTime_a, startTimesForMchOfa, opsIDsForMchOfa
+                actions,
+                ops_ready_time,
+                machines_ready_time,
+                start_times_for_selected_machines,
+                ops_for_selected_machines,
             )
         else:
             flag = True
@@ -55,38 +69,42 @@ def permissibleLeftShift(
                 idxLegalPos,
                 legalPos,
                 endTimesForPossiblePos,
-                startTimesForMchOfa,
-                opsIDsForMchOfa,
+                start_times_for_selected_machines,
+                ops_for_selected_machines,
             )
     return startTime_a, flag
 
 
 def putInTheEnd(
-    actions, jobRdyTime_a, mchRdyTime_a, startTimesForMchOfa, opsIDsForMchOfa
+    actions,
+    ops_ready_time,
+    machines_ready_time,
+    start_times_for_selected_machines,
+    opsIDsForMchOfa,
 ):
-    # index = first position of -config.high in startTimesForMchOfa
+    # index = first position of -config.high in start_times_for_selected_machines
     # print('Yes!OK!')
-    index = np.where(startTimesForMchOfa == -configs.high)[0][0]
-    startTime_a = max(jobRdyTime_a, mchRdyTime_a)
-    startTimesForMchOfa[index] = startTime_a
+    index = np.where(start_times_for_selected_machines == -configs.high)[0][0]
+    startTime_a = max(ops_ready_time, machines_ready_time)
+    start_times_for_selected_machines[index] = startTime_a
     opsIDsForMchOfa[index] = actions
     return startTime_a
 
 
 def calLegalPos(
     dur_a,
-    jobRdyTime_a,
-    duration_matrices,
+    ops_ready_time,
+    durations,
     possiblePos,
-    startTimesForMchOfa,
+    start_times_for_selected_machines,
     opsIDsForMchOfa,
 ):
-    startTimesOfPossiblePos = startTimesForMchOfa[possiblePos]
-    durOfPossiblePos = np.take(duration_matrices, opsIDsForMchOfa[possiblePos])
+    startTimesOfPossiblePos = start_times_for_selected_machines[possiblePos]
+    durOfPossiblePos = np.take(durations, opsIDsForMchOfa[possiblePos])
     startTimeEarlst = max(
-        jobRdyTime_a,
-        startTimesForMchOfa[possiblePos[0] - 1]
-        + np.take(duration_matrices, [opsIDsForMchOfa[possiblePos[0] - 1]]),
+        ops_ready_time,
+        start_times_for_selected_machines[possiblePos[0] - 1]
+        + np.take(durations, [opsIDsForMchOfa[possiblePos[0] - 1]]),
     )
     endTimesForPossiblePos = np.append(
         startTimeEarlst, (startTimesOfPossiblePos + durOfPossiblePos)
@@ -104,7 +122,7 @@ def putInBetween(
     idxLegalPos,
     legalPos,
     endTimesForPossiblePos,
-    startTimesForMchOfa,
+    start_times_for_selected_machines,
     opsIDsForMchOfa,
 ):
     earlstIdx = idxLegalPos[0]
@@ -112,54 +130,107 @@ def putInBetween(
     earlstPos = legalPos[0]
     startTime_a = endTimesForPossiblePos[earlstIdx]
     # print('endTimesForPossiblePos:', endTimesForPossiblePos)
-    startTimesForMchOfa[:] = np.insert(startTimesForMchOfa, earlstPos, startTime_a)[:-1]
+    start_times_for_selected_machines[:] = np.insert(
+        start_times_for_selected_machines, earlstPos, startTime_a
+    )[:-1]
     opsIDsForMchOfa[:] = np.insert(opsIDsForMchOfa, earlstPos, actions)[:-1]
     return startTime_a
 
 
-def calJobAndMchRdyTimeOfa(
-    actions,
-    machines_matrices,
-    duration_matrices,
-    machines_starting_times,
-    operations_on_machines,
-):
-    rows = actions // machines_matrices.shape[2]
-    cols = actions % machines_matrices.shape[2]
-    machines_actions = machines_matrices[:, rows, cols] - 1
-    # cal jobRdyTime_a
-    jobPredecessor = actions - 1 if actions % machines_matrices.shape[2] != 0 else None
-    if jobPredecessor is not None:
-        durJobPredecessor = np.take(duration_matrices, jobPredecessor)
-        mchJobPredecessor = np.take(machines_matrices, jobPredecessor) - 1
-        jobRdyTime_a = (
-            machines_starting_times[mchJobPredecessor][
-                np.where(operations_on_machines[mchJobPredecessor] == jobPredecessor)
-            ]
-            + durJobPredecessor
-        ).item()
-    else:
-        jobRdyTime_a = 0
-    # cal mchRdyTime_a
-    mchPredecessor = (
-        operations_on_machines[machines_actions][
-            np.where(operations_on_machines[machines_actions] >= 0)
-        ][-1]
-        if len(np.where(operations_on_machines[machines_actions] >= 0)[0]) != 0
-        else None
-    )
-    if mchPredecessor is not None:
-        durMchPredecessor = np.take(duration_matrices, mchPredecessor)
-        mchRdyTime_a = (
-            machines_starting_times[machines_actions][
-                np.where(machines_starting_times[machines_actions] >= 0)
-            ][-1]
-            + durMchPredecessor
-        ).item()
-    else:
-        mchRdyTime_a = 0
+def job_machines_ready_time(
+    actions: torch.Tensor,
+    machines: torch.Tensor,
+    durations: torch.Tensor,
+    machines_start_times: torch.Tensor,
+    operations_on_machines: torch.Tensor,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Compute the ready time on the job and machine for the selected operations (=actions).
 
-    return jobRdyTime_a, mchRdyTime_a
+    Args:
+        actions (torch.Tensor): actions taken by the agent
+            shape (batch_size, 1)
+        machines (torch.Tensor): matrices with the indexes of the machines for each task.
+        For example, if machines[0, 1, 2] = 3, it means that
+        the task 2 of the job 1 is executed on the machine 3 in batch 0.
+            shape (batch_size, num_jobs, num_machines)
+        durations (torch.Tensor): matrices with the duration of each task.
+        For example, if durations[0, 1, 2] = 3, it means that
+        the task 2 of the job 1 takes 3 time units in batch 0.
+            shape (batch_size, num_jobs, num_machines)
+        machines_start_times (torch.Tensor): matrices with the starting time of each task.
+        For example, if machines_start_times[0, 1, 2] = 3, it means that
+        the task 2 of the job 1 starts at time 3 in batch 0.
+            shape (batch_size, num_jobs, num_machines)
+        operations_on_machines (torch.Tensor): matrices with the indexes of the operations executed on each machine.
+        For example, if operations_on_machines[0, 1, 2] = 3, it means that
+        the machine of index 1 executes the operation 3 at position 2 in batch 0.
+            shape (batch_size, num_machines, num_jobs)
+    """
+    # flatten the actions to use them as indexes
+    actions = actions.flatten(0)
+    batch_idxs = torch.arange(machines.shape[0])
+    rows = actions // machines.shape[2]
+    cols = actions % machines.shape[2]
+    selected_machines = machines[batch_idxs, rows, cols] - 1
+
+    ## Compute the ready time of the selected operation
+    # compute the previous op in the job, use dummy value -1 if no previous op
+    previous_op_in_job = actions - 1 if actions % machines.shape[2] != 0 else -1
+    # extract the duration of the previous op in the job
+    duration_previous_op_in_job = durations.flatten(1)[batch_idxs, previous_op_in_job]
+    # give duration 0 if previous_op_in_job is -1
+    duration_previous_op_in_job[(previous_op_in_job == -1).flatten()] = 0
+    # extract the machine of the previous op in the job
+    machine_previous_op_in_job = (
+        machines.flatten(1)[batch_idxs, previous_op_in_job] - 1
+    )  # -1 since machines start from 1
+    # dummy machine value -1 if no previous op
+    machine_previous_op_in_job[(previous_op_in_job == -1).flatten()] = -1
+
+    # compute the ready time of the operations
+    ops_ready_time = (
+        machines_start_times[batch_idxs, machine_previous_op_in_job][
+            (operations_on_machines == previous_op_in_job.view(-1, 1, 1)).nonzero(
+                as_tuple=True
+            )
+        ]
+        + duration_previous_op_in_job
+    )
+    ops_ready_time[(previous_op_in_job == -1).flatten()] = 0
+
+    ## Compute the ready time of the machines
+    # Create a mask for non negative elements
+    nonnegative_mask = (operations_on_machines[:, machines, :] >= 0).nonzero()
+
+    # Initialize result tensor with -1
+    previous_op_on_machine_idx = torch.full(
+        (operations_on_machines.size(0),), -1, dtype=torch.long
+    )
+
+    # compute the index of the last non zero element for each row
+    previous_op_on_machine_idx[nonnegative_mask[:, 0]] = nonnegative_mask[:, 1]
+    # extract the value in each row
+    previous_op_on_machine = operations_on_machines[
+        batch_idxs, selected_machines, previous_op_on_machine_idx
+    ]
+
+    # extract the duration of the previous op in the machine
+    duration_previous_op_in_machine = durations.flatten(1)[
+        batch_idxs, previous_op_on_machine
+    ]
+    duration_previous_op_in_machine[(previous_op_on_machine < 0).flatten()] = 0
+    # compute the ready time of the machines
+    machines_ready_time = (
+        machines_start_times[batch_idxs, selected_machines][
+            (operations_on_machines == previous_op_on_machine.view(-1, 1, 1)).nonzero(
+                as_tuple=True
+            )
+        ]
+        + duration_previous_op_in_job
+    )
+    machines_ready_time[(previous_op_on_machine < 0).flatten()] = 0
+    return ops_ready_time, machines_ready_time
 
 
 # if __name__ == "__main__":
@@ -190,7 +261,7 @@ def calJobAndMchRdyTimeOfa(
 #     print()
 #
 #     # start time of operations on machines
-#     machines_starting_times = -configs.high * np.ones_like(
+#     machines_start_times = -configs.high * np.ones_like(
 #         data[0].transpose(), dtype=np.int32
 #     )
 #     # Ops ID on machines
@@ -212,19 +283,19 @@ def calJobAndMchRdyTimeOfa(
 #         adj, _, reward, done, omega, mask = env.step(action)
 #         # t4 = time.time()
 #         # ts.append(t4 - t3)
-#         # jobRdyTime_a, mchRdyTime_a = calJobAndMchRdyTimeOfa(actions=action, machines_matrices=data[-1], duration_matrices=data[0], machines_starting_times=machines_starting_times, operations_on_machines=operations_on_machines)
-#         # print('mchRdyTime_a:', mchRdyTime_a)
-#         startTime_a, flag = permissibleLeftShift(
+#         # ops_ready_time, machines_ready_time = job_machines_ready_time(actions=action, machines=data[-1], durations=data[0], machines_start_times=machines_start_times, operations_on_machines=operations_on_machines)
+#         # print('machines_ready_time:', machines_ready_time)
+#         startTime_a, flag = permissible_left_shift(
 #             actions=action,
-#             duration_matrices=data[0].astype(np.single),
-#             machines_matrices=data[-1],
-#             machines_starting_times=machines_starting_times,
+#             durations=data[0].astype(np.single),
+#             machines=data[-1],
+#             machines_start_times=machines_start_times,
 #             operations_on_machines=operations_on_machines,
 #         )
 #         flags.append(flag)
 #         # print('startTime_a:', startTime_a)
-#         # print('machines_starting_times\n', machines_starting_times)
-#         # print('NOOOOOOOOOOOOO' if not np.array_equal(env.machines_starting_times, machines_starting_times) else '\n')
+#         # print('machines_start_times\n', machines_start_times)
+#         # print('NOOOOOOOOOOOOO' if not np.array_equal(env.machines_start_times, machines_start_times) else '\n')
 #         print("operations_on_machines\n", operations_on_machines)
 #         # print('LBs\n', env.LBs)
 #         rewards.append(reward)
@@ -236,24 +307,24 @@ def calJobAndMchRdyTimeOfa(
 #     print(t2 - t1)
 #     # print(sum(ts))
 #     # print(np.sum(operations_on_machines // n_m, axis=1))
-#     # print(np.where(machines_starting_times == machines_starting_times.max()))
-#     # print(operations_on_machines[np.where(machines_starting_times == machines_starting_times.max())])
+#     # print(np.where(machines_start_times == machines_start_times.max()))
+#     # print(operations_on_machines[np.where(machines_start_times == machines_start_times.max())])
 #     print(
-#         machines_starting_times.max()
+#         machines_start_times.max()
 #         + np.take(
 #             data[0],
 #             operations_on_machines[
-#                 np.where(machines_starting_times == machines_starting_times.max())
+#                 np.where(machines_start_times == machines_start_times.max())
 #             ],
 #         )
 #     )
 #     # np.save('sol', operations_on_machines // n_m)
 #     # np.save('jobSequence', operations_on_machines)
 #     # np.save('testData', data)
-#     # print(machines_starting_times)
+#     # print(machines_start_times)
 #     durAlongMchs = np.take(data[0], operations_on_machines)
-#     mchsEndTimes = machines_starting_times + durAlongMchs
-#     print(machines_starting_times)
+#     mchsEndTimes = machines_start_times + durAlongMchs
+#     print(machines_start_times)
 #     print(mchsEndTimes)
 #     print()
 #     print(env.operations_on_machines)

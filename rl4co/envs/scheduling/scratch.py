@@ -6,7 +6,7 @@ import torch
 from tensordict.tensordict import TensorDict
 
 from rl4co.envs.common.base import RL4COEnvBase
-from rl4co.envs.scheduling.jssp import configs, permissibleLeftShift
+from rl4co.envs.scheduling.jssp import configs, permissible_left_shift
 
 
 def last_nonzero_indices(
@@ -198,7 +198,7 @@ class JSSP(RL4COEnvBase):
             dim=2,
         )
 
-        # initialize feasible omega
+        # initialize feasible actions
         self.feasible_actions = self.first_col.to(dtype=torch.int64).repeat(
             *batch_size, 1
         )
@@ -213,7 +213,7 @@ class JSSP(RL4COEnvBase):
         )
 
         # start time of operations on machines
-        self.mchsStartTimes = (
+        self.machines_start_times = (
             torch.ones_like(self.durations.transpose(1, 2), dtype=torch.int32)
             * -configs.high
         )
@@ -248,7 +248,7 @@ class JSSP(RL4COEnvBase):
             row = action // self.num_machines
             col = action % self.num_machines
             batch_idx = torch.arange(
-                self.batch_size, dtype=torch.int64, device=self.device
+                *self.batch_size, dtype=torch.int64, device=self.device
             )
             self.finished_mark[batch_idx, row, col] = 1
             dur_a = self.durations[batch_idx, row, col]
@@ -258,11 +258,11 @@ class JSSP(RL4COEnvBase):
 
             # UPDATE STATE:
             # permissible left shift
-            startTime_a, flag = permissibleLeftShift(
-                a=action,
-                durMat=self.durations,
-                mchMat=self.m,
-                mchsStartTimes=self.mchsStartTimes,
+            startTime_a, flag = permissible_left_shift(
+                actions=action,
+                durations=self.durations,
+                machines=self.machines,
+                machines_start_times=self.machines_start_times,
                 operations_on_machines=self.operations_on_machines,
             )
             self.flags.append(flag)
