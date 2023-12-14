@@ -33,10 +33,12 @@ def permissible_left_shift(
     ]
     ops_for_selected_machines = operations_on_machines[batch_idxs, machines_selected]
     flag = False
-    # TODO da qui
-    possiblePos = np.where(ops_ready_time < start_times_for_selected_machines)[0]
+    possible_pos = torch.nonzero(
+        ops_ready_time < start_times_for_selected_machines, as_tuple=True
+    )
     # print('possiblePos:', possiblePos)
-    if len(possiblePos) == 0:
+    # TODO check if calLegalPos is correct also when possiblePos is empty for some batch idx
+    if len(possible_pos) == 0:
         startTime_a = putInTheEnd(
             actions,
             ops_ready_time,
@@ -49,7 +51,7 @@ def permissible_left_shift(
             ops_duration,
             ops_ready_time,
             durations,
-            possiblePos,
+            possible_pos,
             start_times_for_selected_machines,
             ops_for_selected_machines,
         )
@@ -151,32 +153,39 @@ def job_machines_ready_time(
         actions (torch.Tensor): actions taken by the agent
             shape (batch_size, 1)
         machines (torch.Tensor): matrices with the indexes of the machines for each task.
-        For example, if machines[0, 1, 2] = 3, it means that
-        the task 2 of the job 1 is executed on the machine 3 in batch 0.
+            For example, if machines[0, 1, 2] = 3, it means that
+            the task 2 of the job 1 is executed on the machine 3 in batch 0.
             shape (batch_size, num_jobs, num_machines)
         durations (torch.Tensor): matrices with the duration of each task.
-        For example, if durations[0, 1, 2] = 3, it means that
-        the task 2 of the job 1 takes 3 time units in batch 0.
+            For example, if durations[0, 1, 2] = 3, it means that
+            the task 2 of the job 1 takes 3 time units in batch 0.
             shape (batch_size, num_jobs, num_machines)
         machines_start_times (torch.Tensor): matrices with the starting time of each task.
-        For example, if machines_start_times[0, 1, 2] = 3, it means that
-        the task 2 of the job 1 starts at time 3 in batch 0.
+            For example, if machines_start_times[0, 1, 2] = 3, it means that
+            the task 2 of the job 1 starts at time 3 in batch 0.
             shape (batch_size, num_jobs, num_machines)
         operations_on_machines (torch.Tensor): matrices with the indexes of the operations executed on each machine.
-        For example, if operations_on_machines[0, 1, 2] = 3, it means that
-        the machine of index 1 executes the operation 3 at position 2 in batch 0.
+            For example, if operations_on_machines[0, 1, 2] = 3, it means that
+            the machine of index 1 executes the operation 3 at position 2 in batch 0.
             shape (batch_size, num_machines, num_jobs)
+
+    Returns:
+        ops_ready_time (torch.Tensor): ready time of the selected operations
+            shape (batch_size, 1)
+        machines_ready_time (torch.Tensor): ready time of the machines
+            shape (batch_size, 1)
     """
     # flatten the actions to use them as indexes
     actions = actions.flatten(0)
     batch_idxs = torch.arange(machines.shape[0])
-    rows = actions // machines.shape[2]
-    cols = actions % machines.shape[2]
+    num_machines = machines.shape[2]
+    rows = actions // num_machines
+    cols = actions % num_machines
     selected_machines = machines[batch_idxs, rows, cols] - 1
 
     ## Compute the ready time of the selected operation
     # compute the previous op in the job, use dummy value -1 if no previous op
-    previous_op_in_job = actions - 1 if actions % machines.shape[2] != 0 else -1
+    previous_op_in_job = actions - 1 if actions % num_machines != 0 else -1
     # extract the duration of the previous op in the job
     duration_previous_op_in_job = durations.flatten(1)[batch_idxs, previous_op_in_job]
     # give duration 0 if previous_op_in_job is -1

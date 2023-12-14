@@ -32,7 +32,9 @@ def last_nonzero_indices(
     return xRet, yRet
 
 
-def batched_last_nonzero_indices(starting_times: torch.Tensor) -> torch.Tensor:
+def batched_last_nonzero_indices(
+    starting_times: torch.Tensor,
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     stack_b = []
     stack_x = []
     stack_y = []
@@ -41,12 +43,14 @@ def batched_last_nonzero_indices(starting_times: torch.Tensor) -> torch.Tensor:
         stack_x.append(x_idx)
         stack_y.append(y_idx)
         stack_b.append(torch.tensor([i] * x_idx.shape[0]))
-    return torch.stack(stack_b), torch.stack(stack_x), torch.stack(stack_y)
+    return torch.concat(stack_b), torch.concat(stack_x), torch.concat(stack_y)
 
 
 def end_time_lb(starting_times: torch.Tensor, durations: torch.Tensor) -> torch.Tensor:
     """
     Calculate the lower bound of the end time of each job.
+    It is equal to the duration for operations that have not yet started,
+    otherwise it is the start time plus the cumulative sum of the durations of the operations on the same machine.
 
     Args:
         starting_times (torch.Tensor): batched 2D array containing the start time of each job.
@@ -181,12 +185,12 @@ class JSSP(RL4COEnvBase):
 
         # initialize features
         self.LBs = torch.cumsum(self.durations, dim=2)
-        self.initQuality = (
+        self.initial_quality = (
             torch.amax(self.LBs, dim=(1, 2))
             if not configs.init_quality_flag
             else torch.zeros(*batch_size)
         )
-        self.max_endTime = torch.copy(self.initQuality)
+        self.max_end_time = torch.copy(self.initial_quality)
         self.finished_mark = torch.zeros_like(self.machines)
 
         features = torch.concatenate(
@@ -297,11 +301,11 @@ class JSSP(RL4COEnvBase):
             ),
             axis=1,
         )
-        reward = -(self.LBs.max() - self.max_endTime)
+        reward = -(self.LBs.max() - self.max_end_time)
         if reward == 0:
             reward = 1  # configs.rewardscale
             self.posRewards += reward
-        self.max_endTime = self.LBs.max()
+        self.max_end_time = self.LBs.max()
 
         return (
             self.adjacency,
